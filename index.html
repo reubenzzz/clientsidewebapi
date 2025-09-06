@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Client-side Web APIs Demo — Countries Explorer</title>
+  <meta name="description" content="Explore countries using REST Countries API. Save favorites and preferences in localStorage." />
+
+  <style>
+    :root{
+      --bg: #f7f8fb;
+      --card:#ffffff;
+      --text:#0f172a;
+      --muted:#5b6470;
+      --accent:#0ea5a4;
+      --radius:12px;
+      --glass: rgba(255,255,255,0.6);
+    }
+    [data-theme="dark"]{ --bg:#071124; --card:#0b1a26; --text:#dbeafe; --muted:#9fb4c9; --accent:#34d399; --glass: rgba(255,255,255,0.04); }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color:var(--text); background:linear-gradient(180deg,var(--bg), #e9eef6);}
+    .app{max-width:1100px;margin:28px auto;padding:20px}
+    header{display:flex;gap:16px;align-items:center;justify-content:space-between}
+    h1{font-size:1.25rem;margin:0}
+    .controls{display:flex;gap:12px;align-items:center}
+    .search{display:flex;gap:8px;align-items:center;background:var(--card);padding:8px;border-radius:999px;box-shadow:0 6px 20px rgba(3,7,18,0.06)}
+    .search input{border:0;background:transparent;outline:none;padding:6px 8px;font-size:0.95rem;width:220px}
+    button{background:var(--accent);border:0;color:white;padding:8px 12px;border-radius:10px;cursor:pointer}
+    button.ghost{background:transparent;color:var(--text);border:1px solid rgba(0,0,0,0.06)}
+    .theme-toggle{padding:6px 10px;border-radius:10px}
+    main{margin-top:18px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+
+    .card{background:var(--card);border-radius:var(--radius);overflow:hidden;box-shadow:0 8px 30px rgba(18,21,28,0.06);display:flex;flex-direction:column;min-height:200px;transition:transform .18s ease}
+    .card:hover{transform:translateY(-6px)}
+    .flag{height:140px;background-size:cover;background-position:center}
+    .card-body{padding:12px;flex:1;display:flex;flex-direction:column}
+    .meta{display:flex;justify-content:space-between;align-items:center}
+    .muted{color:var(--muted);font-size:0.9rem}
+    .fav{background:transparent;border:0;cursor:pointer;font-weight:600}
+    .empty{padding:28px;border-radius:12px;background:var(--glass);text-align:center;color:var(--muted)}
+    footer{margin-top:18px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+    @media (max-width:520px){.search input{width:120px}}
+
+    .chips{display:flex;gap:8px;flex-wrap:wrap}
+    .chip{padding:6px 10px;border-radius:999px;background:var(--card);border:1px solid rgba(0,0,0,0.04);cursor:pointer}
+    .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+  </style>
+</head>
+<body>
+  <div class="app" id="app" data-theme="light">
+    <header>
+      <div>
+        <h1>Countries Explorer</h1>
+        <div class="muted">Search countries (name, partial name). Save favorites & preferences locally.</div>
+      </div>
+
+      <div class="controls">
+        <div class="search" role="search">
+          <label class="sr-only" for="q">Search countries</label>
+          <input id="q" placeholder="Search (e.g., india, united)" aria-label="Search countries" />
+          <button id="searchBtn">Search</button>
+        </div>
+
+        <div class="chips" id="regionChips" aria-hidden="true" style="margin-left:4px">
+          <div class="chip" data-region="all">All</div>
+          <div class="chip" data-region="Africa">Africa</div>
+          <div class="chip" data-region="Americas">Americas</div>
+          <div class="chip" data-region="Asia">Asia</div>
+          <div class="chip" data-region="Europe">Europe</div>
+          <div class="chip" data-region="Oceania">Oceania</div>
+        </div>
+
+        <button class="theme-toggle" id="themeBtn">Toggle Theme</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="resultsArea">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="muted" id="status">No search yet — try "Japan"</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="ghost" id="showFavs">Show Favorites</button>
+            <button class="ghost" id="clearFavs">Clear Favorites</button>
+          </div>
+        </div>
+
+        <div class="grid" id="grid"></div>
+      </section>
+
+      <footer>
+        <div class="muted">Stored locally: <span id="favCount">0</span> favorite(s)</div>
+        <div class="muted">Last search: <span id="lastSearch">—</span></div>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    // Simple single-file app using the REST Countries API
+    const q = document.getElementById('q');
+    const searchBtn = document.getElementById('searchBtn');
+    const grid = document.getElementById('grid');
+    const status = document.getElementById('status');
+    const favCount = document.getElementById('favCount');
+    const lastSearchEl = document.getElementById('lastSearch');
+    const app = document.getElementById('app');
+    const themeBtn = document.getElementById('themeBtn');
+    const showFavs = document.getElementById('showFavs');
+    const clearFavsBtn = document.getElementById('clearFavs');
+    const regionChips = document.getElementById('regionChips');
+
+    const API_BASE = 'https://restcountries.com/v3.1';
+
+    // LocalStorage keys
+    const LS_FAV = 'cswa:favorites';
+    const LS_THEME = 'cswa:theme';
+    const LS_LAST = 'cswa:lastsearch';
+
+    // Initialize
+    function init(){
+      // restore theme
+      const theme = localStorage.getItem(LS_THEME) || 'light';
+      setTheme(theme);
+
+      // restore last search
+      const last = localStorage.getItem(LS_LAST) || '';
+      if(last){ q.value = last; lastSearchEl.textContent = last }
+
+      updateFavCount();
+
+      // event listeners
+      searchBtn.addEventListener('click', onSearch);
+      q.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') onSearch() });
+      themeBtn.addEventListener('click', toggleTheme);
+      showFavs.addEventListener('click', renderFavorites);
+      clearFavsBtn.addEventListener('click', clearFavorites);
+
+      regionChips.addEventListener('click', (e)=>{
+        const chip = e.target.closest('.chip');
+        if(!chip) return;
+        const region = chip.dataset.region;
+        if(region === 'all') return; // user can just search empty
+        q.value = region; onSearch();
+      });
+
+      // if there's a last search, do it
+      if(last){ fetchCountries(last) }
+    }
+
+    async function onSearch(){
+      const term = q.value.trim();
+      if(!term){ status.textContent = 'Please type a country name or partial name.'; return }
+      localStorage.setItem(LS_LAST, term);
+      lastSearchEl.textContent = term;
+      await fetchCountries(term);
+    }
+
+    async function fetchCountries(name){
+      status.textContent = 'Searching...';
+      grid.innerHTML = '';
+      try{
+        // use name search; partial names also work
+        const res = await fetch(`${API_BASE}/name/${encodeURIComponent(name)}?fields=name,flags,region,population,capital,languages,cca2`);
+        if(!res.ok){ throw new Error('No results') }
+        const data = await res.json();
+        renderCountries(data);
+        status.textContent = `Found ${data.length} result(s)`;
+      }catch(err){
+        status.textContent = 'No results. Try a different search.';
+        grid.innerHTML = `<div class="empty">No results for "${escapeHtml(name)}"</div>`;
+      }
+    }
+
+    function renderCountries(countries){
+      grid.innerHTML = '';
+      countries.sort((a,b)=> (b.population||0)-(a.population||0));
+      countries.forEach(c=>{
+        const el = document.createElement('article');
+        el.className = 'card';
+        el.innerHTML = `
+          <div class="flag" style="background-image:url('${c.flags?.png || c.flags?.svg}')" role="img" aria-label="Flag of ${escapeHtml(c.name.common)}"></div>
+          <div class="card-body">
+            <div class="meta">
+              <div style="font-weight:700">${escapeHtml(c.name.common)} <span class="muted" style="font-weight:400">(${escapeHtml(c.cca2||'')})</span></div>
+              <div>
+                <button class="fav" data-cca2="${escapeHtml(c.cca2||'')}">${isFavorite(c.cca2)?'★':'☆'}</button>
+              </div>
+            </div>
+
+            <div style="flex:1;margin-top:8px">
+              <div class="muted">Region: ${escapeHtml(c.region||'—')}</div>
+              <div class="muted">Capital: ${escapeHtml((c.capital||['—'])[0])}</div>
+              <div class="muted">Population: ${formatNumber(c.population||0)}</div>
+              <div class="muted">Languages: ${escapeHtml(Object.values(c.languages||{}).join(', ') || '—')}</div>
+            </div>
+            <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
+              <small class="muted">Data from REST Countries</small>
+              <a class="muted" href="https://en.wikipedia.org/wiki/${encodeURIComponent(c.name.common)}" target="_blank" rel="noopener">Learn more ↗</a>
+            </div>
+          </div>
+        `;
+        // favorite click
+        el.querySelector('.fav').addEventListener('click', (ev)=>{
+          ev.preventDefault(); const cca2 = ev.target.dataset.cca2; toggleFavorite(cca2); ev.target.textContent = isFavorite(cca2)?'★':'☆'; updateFavCount();
+        });
+        grid.appendChild(el);
+      });
+    }
+
+    // Favorites: store minimal data (cca2 and name) for quick display
+    function getFavorites(){
+      try{ return JSON.parse(localStorage.getItem(LS_FAV) || '[]') }catch(e){ return [] }
+    }
+    function saveFavorites(list){ localStorage.setItem(LS_FAV, JSON.stringify(list)) }
+    function isFavorite(cca2){ if(!cca2) return false; return getFavorites().some(f=>f.cca2 === cca2) }
+    function toggleFavorite(cca2){ if(!cca2) return; const list = getFavorites(); const i = list.findIndex(f=>f.cca2===cca2); if(i>=0){ list.splice(i,1) } else { list.push({cca2, added:Date.now()}) } saveFavorites(list) }
+    function updateFavCount(){ favCount.textContent = getFavorites().length }
+    function clearFavorites(){ if(confirm('Clear all favorites?')){ saveFavorites([]); updateFavCount(); alert('Favorites cleared') } }
+
+    async function renderFavorites(){
+      const favs = getFavorites();
+      if(favs.length === 0){ grid.innerHTML = '<div class="empty">No favorites yet — mark countries with the star to add.</div>'; status.textContent = 'Favorites'; return }
+      status.textContent = 'Loading favorites...';
+      // fetch details for each favorite using alpha code endpoint
+      const codes = favs.map(f=>f.cca2).join(',');
+      try{
+        const res = await fetch(`${API_BASE}/alpha?codes=${codes}&fields=name,flags,region,population,capital,languages,cca2`);
+        const data = await res.json();
+        renderCountries(data);
+        status.textContent = `Favorites (${data.length})`;
+      }catch(e){ status.textContent = 'Failed to load favorites' }
+    }
+
+    function setTheme(t){ app.setAttribute('data-theme', t); localStorage.setItem(LS_THEME, t) }
+    function toggleTheme(){ const cur = app.getAttribute('data-theme') || 'light'; setTheme(cur === 'light' ? 'dark' : 'light') }
+
+    // small helpers
+    function formatNumber(n){ return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') }
+    function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>\"]/g, (c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) }
+
+    // Initialize app
+    init();
+  </script>
+</body>
+</html>
